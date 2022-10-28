@@ -5,12 +5,126 @@ from discord import Embed
 import time
 import DiscordUtils
 import asyncio
+from random import shuffle
+from enum import Enum
 
-queues = {}
+def identifica(link):
+  
+  if link.startswith('https'):
+    if 'youtu' in link:
+      if 'list=' in link:
+        return 'ytp'
+      else:
+        return 'ytl'
+        
+    if 'soundcloud' in link:
+      return 'sc'
+    
+    return None
+  else:
+    return 'pesquisa'
 
-loop = {}
+
+
+class Loop(Enum):
+  NONE = 0
+  Song = 1
+  List = 2
+
+
+
+
+
+class Queue:
+  def __init__(self):
+    self.queue = []
+    self.loop = Loop.NONE
+
+  @property
+  def is_empty(self):
+    if self.queue:
+      return False
+    else:
+      return True
+
+  @property
+  def current_track(self):
+    if self.queue:
+      return self.queue[0]
+    else:
+      return None
+
+  @property
+  def playlist(self):
+    return self.queue
+
+  @property
+  def length(self):
+    return self.queue.count
+
+  def add(self, *args):
+    self.queue.extend(args)
+
+  def next_track(self):
+    if self.loop == Loop.Song:
+      pass
+    elif self.loop == Loop.List:
+      self.queue.extend(self.queue[0])
+      self.queue.pop(0)
+    else:
+      self.queue.pop(0)
+
+    if self.queue:
+      return self.queue[0]
+
+  def set_loop(self, mode):
+    if mode == "NONE":
+      self.loop = Loop.NONE
+    elif mode == "SONG":
+      self.loop = Loop.Song
+    elif mode == "LIST":
+      self.loop = Loop.List
+
+  def remove_track(self, position):
+    self.queue.pop(position)
+
+  def shuffle(self):
+    if self.queue:
+      return shuffle(self.queue)
+
+  def clear(self):
+    self.queue.clear()
+
+  def skip(self):
+    self.queue.pop(0)
+
+  def where(self, track):
+    return self.queue.index(track)
+
+
+    
+
+class Player(wavelink.Player):
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.queue = Queue()
+
+  async def start_playing(self):
+    await self.play(self.queue.current_track[0])
+
+  async def start_next(self):
+    try:
+      await self.play(self.queue.next_track()[0])
+    except TypeError:
+      return
+
+
+
+
+      
 
 class Musicas(commands.Cog, description='Músicas :musical_note:'):
+  
   def __init__(self, bot):
     self.bot = bot
 
@@ -21,45 +135,35 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     node = await wavelink.NodePool.create_node(bot=self.bot,
                                           host='lavalink-replit.bolofofodoidao.repl.co',
                                           port=443,
-                                          password='penishaha',
+                                          password='youshallnotpass',
                                           https=True)
-  
-# =======================================================================================================
-  # toca a proxima musica quando a atual acabar
-  @commands.Cog.listener()
-  async def  on_wavelink_track_end(self, player: wavelink.Player, track: wavelink.Track, reason):
-    if reason == 'FINISHED':
-      if loop[player.guild.id]:
-        atual = queues[player.guild.id][0]
-        queues[player.guild.id].append(atual)
-
-      queues[player.guild.id].pop(0)
-      if queues[player.guild.id]:
-        await player.play(queues[player.guild.id][0]['track'])
 
 # =======================================================================================================
   @commands.Cog.listener() # quando o node estiver pronto printar informando
   async def on_wavelink_node_ready(self, node: wavelink.Node):
     print(f"Node {node.identifier} está conectado!")
+  
+# =======================================================================================================
+  # toca a proxima musica quando a atual acabar
+  @commands.Cog.listener()
+  async def  on_wavelink_track_end(self, player: wavelink.Player, track: wavelink.Track, reason):
+    await player.start_next()
 
 # =======================================================================================================
-  @commands.Cog.listener() # printa erro e skipa musica
+  # printa erro e skipa musica
+  @commands.Cog.listener()
   async def on_wavelink_track_exception(self, player: wavelink.Player, track: wavelink.Track, error):
-    await queues[player.guild_id][0]['ctx'].send(f":warning: Falha ao tocar a musica {queues[player.guild_id][0]['track']}! Pulando para a proxima! wavelink.TrackExeception")
+    await player.queue.current_track[1].send(f":warning: Falha ao tocar a musica {player.queue.current_track[0].title}! Pulando para a proxima! wavelink.TrackExeception")
 
-    queues[player.guild_id].pop(0)
-    if len(queues[player.guild_id]) != 0:
-      await player.play(queues[player.guild_id][0]['track'])
+    await player.start_next()
 
 # =======================================================================================================
-  @commands.Cog.listener() # printa erro e skipa a musica
+  # printa erro e skipa a musica
+  @commands.Cog.listener()
   async def on_wavelink_track_stuck(self, player: wavelink.Player, track: wavelink.Track, threshold):
-    await queues[player.guild_id][0]['ctx'].send(f":warning: Falha ao tocar a musica {queues[player.guild_id][0]['track']}! Pulando para a proxima! wavelink.TrackStuck")
+    await player.queue.current_track[1].send(f":warning: Falha ao tocar a musica {player.queue.current_track[0].title}! Pulando para a proxima! wavelink.TrackStuck")
         
-    queues[player.guild_id].pop(0)
-    if len(queues[player.guild_id]) != 0:
-      await player.play(queues[player.guild_id][0]['track'])
-
+    await player.start_next()
 
 # =======================================================================================================
   # toca a musica no bot se ele n estiver conectado ele conecta no chat de voz e toca ou link do youtube ou
@@ -67,55 +171,36 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # se o bot já estiver tocando algo o parametro do comando vai para a fila
   @commands.command(aliases=['t','play','p'], help='Toca vídeos do youtube no canal de voz que você está conectado', description='.tocar <link do video do youtube/termo pra pesquisar no youtube>')
   async def tocar(self, ctx, *, musica: str):
-    vc: wavelink.Player = ctx.voice_client
+    vc: Player = ctx.voice_client
     
     # conecta no canal de voz
     if not vc:
       if ctx.author.voice is None:
         await ctx.send('Você não está conectado a nenhum canal de voz! :skull:')
         return
-      
-      vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
-
-      if ctx.guild.id in queues:
-        queues[ctx.guild.id].clear()
-
-    #else:
-        #if player.channel_id != ctx.message.author.voice.channel.id:
-            #await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-            #return
-        # esse codigo n funciona mais, porque player.channel_id não é mais valido
-    
-    if not ctx.guild.id in loop: # jeito bem pesado de fazer isso
-      loop[ctx.guild.id] = False
-
-    #coloca o server na lista de queues
-    if not ctx.guild.id in queues:
-      queues[ctx.guild.id] = ['']
-      queues[ctx.guild.id].pop(0)
+      vc: Player = await ctx.author.voice.channel.connect(cls=Player)
+    else:
+      if ctx.author.voice.channel.id != ctx.message.author.voice.channel.id:
+        await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
+        return
 
     # pega o tipo de str que o usuario mando
-    tipo = await Identificador.identifica(link=musica) # rever !!!
+    tipo = identifica(musica)
     
     # dependendo do tipo da str o bot faz algo diferente
-    if tipo == 'pesquisa': # link do youtube e pesquisa são o mesmo comando da pra juntar
+    if tipo == 'pesquisa' or tipo == 'ytl': # link do youtube e pesquisa são o mesmo comando da pra juntar
       musica = await wavelink.YouTubeTrack.search(query=musica, return_first=True)
       if not musica:
         await ctx.send(':warning: Erro: sua música não foi encontrada')
         return
-    elif tipo == 'ytl':
-      musica = await wavelink.YouTubeTrack.search(query=musica, return_first=True)
-      if not musica:
+    elif tipo == 'ytp':
+      playlist = await wavelink.YouTubePlaylist.search(query=musica)
+      musicas = playlist.tracks
+      if not musicas:
         await ctx.send(':warning: Erro: sua música não foi encontrada')
         return
-    #elif tipo == 'ytp':                                             codigo de playlist
-       # playlist = await self.bot.wavelink.get_tracks(musica)
-        #musicas = playlist.tracks
-       # if not musicas:
-       #     await ctx.send(':warning: Erro: sua música não foi encontrada')
-       #     return
-       # embed = await mensagemBunita.playlist(ctx=ctx, playlist=playlist, first=musicas[0])
-       # await ctx.send(embed=embed)
+      embed = await mensagemBunita.playlist(ctx=ctx, playlist=playlist)
+      await ctx.send(embed=embed)
     elif tipo == 'sc':
       await ctx.send('Não tenho suporte pra soundcloud ainda! :skull:')
       return
@@ -124,32 +209,21 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       return
 
     #adiciona a musica a playlist 
-    #if tipo != 'ytp': 
-        #if len(queues[ctx.guild.id]) <= 1000:
-            #musica = musicas[0]
-            #content = {'track' : musica, 'ctx' : ctx ,'tipo' : tipo}
-            #queues[ctx.guild.id].append(content)
-       # else:
-           # await ctx.send(':warning: Você alcançou o limite de 5000 musicas por queue! Música não adicionada! :skull:')
-            #return
-    #else:
-    if len(queues[ctx.guild.id]) <= 1000:
-      content = {'track' : musica, 'ctx' : ctx ,'tipo' : tipo}
-      queues[ctx.guild.id].append(content)
+    if tipo == 'ytp':
+      for musica in musicas:
+        vc.queue.add((musica, ctx))
     else:
-      await ctx.send(':warning: Você alcançou o limite de 1000 musicas por queue! Música não adicionada! :skull:')
-      return
-
-    print(f"player da guilda {vc.guild.name} tocando = {vc.is_playing()} pausado = {vc.is_paused()}")
-
+      vc.queue.add((musica, ctx))
+      
+    # se o bot estiver tocando algo já ele só manda uma mensagem falando que adiciono na playlist
     if vc.is_playing() and not vc.is_paused():
-      embed = await mensagemBunita.musicaQueue(ctx=ctx, musica=queues[ctx.guild.id][len(queues[ctx.guild.id]) - 1]['track'], posição=len(queues[ctx.guild.id]) - 1)
+      embed = await mensagemBunita.musicaQueue(ctx=ctx, musica=musica, posição=vc.queue.where( (musica,ctx)))
       await ctx.send(embed=embed)
       return
 
-    await vc.play(queues[ctx.guild.id][0]['track'])
+    await vc.start_playing()
 
-    await ctx.send(f'Tocando `{queues[ctx.guild.id][0]["track"]}` agora! No canal de voz `{ctx.author.voice.channel.name}` :musical_note:')
+    await ctx.send(f'Tocando `{vc.queue.current_track[0].title}` agora! No canal de voz `{vc.queue.current_track[1].author.voice.channel.name}` :musical_note:')
 
 # =======================================================================================================
   # mostra a musica que está tocando atualmente
@@ -157,48 +231,39 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # o tempo do video que está e o tempo máximo
   @commands.command(aliases=['np', 'tc', 'nowPlaying'], help='mostra a musica que está sendo tocada agora')
   async def tocandoagora(self, ctx):
-    player = wavelink.player
+    vc: Player = ctx.voice_client
 
     #verifica se o bot ta em um canal de voz
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
 
     # verifica se o bot ta tocando alguma coisa
-    elif not player.is_playing and not player.is_paused and not queues[ctx.guild.id]:
-      await ctx.send('Não tô tocando nada')
+    elif not vc.is_playing and not vc.is_paused:
+      await ctx.send('Não tô tocando nada!')
       return
     
     # cria o embed e manda
-    embed = await mensagemBunita.musicayt(ctx=ctx, musica=queues[ctx.guild.id][0]['track'], player=player)
+    embed = await mensagemBunita.musicayt(ctx=vc.queue.current_track[1], musica=vc.queue.current_track[0], player=vc)
     await ctx.send(embed=embed)
 
 # =======================================================================================================
   # pausa a musica que estiver tocando
   @commands.command(aliases=['pause'], help='Pausa a música que está tocando')
   async def pausar(self, ctx):
-    player = wavelink.player
+    vc: Player = ctx.voice_client
 
-    #verifica se o bot ta conectado no canal de voz
-    if not player.is_connected:
+    #verifica se o bot ta conectado no canal de voz / ta no mesmo canal que o autor / se o autor ta em um canal de voz
+    if not vc:
       await ctx.send('Não to conectado a nenhum canal de voz!')
-
-    #verifica se o usuario que invoco tá em um canal de voz em primeiro lugar
-    elif ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-
-    #verifica se o usuario que invoco tá no mesmo canal de voz que o bot
-    #elif player.channel_id != ctx.message.author.voice.channel.id:
-        #await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-      # player.channel_id n funciona mais
     
     #verifica se o player ta tocando musica se sim ele pausa
-    elif player.is_playing:
-      await player.set_pause(True)
+    elif vc.is_playing():
+      await vc.set_pause(True)
       await ctx.send('Música pausada! :thumbsup:')
     
     #verifica se o player já ta pausado
-    elif player.is_paused:
+    elif vc.is_paused():
       await ctx.send('A música ja está pausada')
     
     #a ultima opção é o bot não ta tocando nada
@@ -209,28 +274,19 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # verifica se tem uma musica pausada e continua ela se houver
   @commands.command(aliases=['resume', 'continuar', 'resumir'], help='despausa a musica se ela foi pausada')
   async def despausar(self, ctx):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
     #verifica se o bot ta conectado no canal de voz
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Não estou conectado a nenhum canal de voz')
-
-    #verifica se o usuario que invoco tá em um canal de voz em primeiro lugar
-    elif ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-    
-    #verifica se o usuario que invoco tá no mesmo canal de voz que o bot
-    #elif player.channel_id != ctx.message.author.voice.channel.id :
-        #await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-    # player.channel_id n funciona mais
     
     #verifica se o player ta pausado se sim ele despausa
-    elif player.is_paused:
-      await player.set_pause(False)
+    elif vc.is_paused():
+      await vc.set_pause(False)
       await ctx.send('Música despausada! :thumbsup:')
     
     #verifica se o player ta tocando
-    elif player.is_playing:
+    elif player.is_playing():
       await ctx.send('A música já está tocando! :musical_note:')
     
     #a ultima opção é o bot não ta tocando nada
@@ -241,31 +297,18 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # pula para proxima música da fila
   @commands.command(aliases=['s', 'skip', 'skipar'], help='Pula para a próxima música da playlist e se não tiver nenhuma só não toca nada')
   async def pular(self, ctx):
-    player = wavelink.player
+    vc: Player = ctx.voice_client
 
     #verifica se o bot ta conectado no canal de voz
-    if not player.is_connected:
-      await ctx.send('Eu não estou em um canal de voz')
-      return
-
-    #verifica se o usuario que invoco tá em um canal de voz em primeiro lugar
-    elif ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
+    if not vc:
+      await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
     
-    #verifica se o usuario que invoco tá no mesmo canal de voz que o bot
-    #elif player.channel_id != ctx.message.author.voice.channel.id:
-        #await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-        #return
-    # player.channel_id n funfa mais carai
-    
-    if not player.is_playing and not player.is_paused:
+    if not vc.is_playing() and not vc.is_paused():
       await ctx.send('Eu não to tocando nada')
       return
     
-    atual = []
-    
-    if loop[ctx.guild.id]:
+    if vc.queue.loop == Loop.List:
         
       def check(m):
         return m.author == ctx.author and m.channel == ctx.channel and m.content == '1' or m.content == '2' or m.content == '3'
@@ -279,7 +322,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
           
       if msg.content == '1':
         await ctx.send('Okay, pulando a música e mantendo a no loop...')
-        atual.append(queues[ctx.guild.id][0])
+        vc.queue.add(vc.queue.current_track)
       
       elif msg.content == '2':
         await ctx.send('Okay, pulando a música e removendo ela do loop...')
@@ -288,13 +331,9 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         await ctx.send('Operação cancelada! :robot: bep bop')
         return
     
-    await player.stop()
+    await vc.stop()
     await ctx.send('Música skipada! :thumbsup:')
-    queues[ctx.guild.id].pop(0)
-    if atual:
-      queues[ctx.guild.id].append(atual[0])
-    if queues[ctx.guild.id]:
-      await player.play(queues[ctx.guild.id][0]['track'])
+    await vc.start_next()
 
 # =======================================================================================================
 
@@ -352,15 +391,17 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
   @commands.command(aliases=['queue'], help='Mostra todas as músicas que estão na playlist')
   async def playlist(self, ctx):
-    if not queues[ctx.guild.id]:
+    vc: Player = ctx.voice_client
+    
+    if not vc or vc.queue.is_empty:
       await ctx.send('Não tem nenhuma música na playlist!')
       return
 
-    if len(queues[ctx.guild.id]) == 1:
+    if vc.queue.length == 1:
       await self.tocandoagora(ctx=ctx)
       return
 
-    await mensagemBunita.Queue(queues=queues[ctx.guild.id], ctx=ctx)
+    await mensagemBunita.Queue(queues=vc.queue.playlist, ctx=ctx)
 
 
 # =======================================================================================================
@@ -472,11 +513,11 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
 # =======================================================================================================
   
-  @commands.command(name='loop', help='Tranca a playlist atual e loopa ela (para desativar esse comando é só usar ele denovo)')
+  @commands.command(name='loop', help='Loopa uma música ou a playlist toda! (pra desativar/trocar o modo use o comando novamente)')
   async def loop_command(self, ctx):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
 
@@ -484,21 +525,22 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
       return
 
-    if not player.is_playing and not player.is_paused:
+    if not vc.is_playing and not vc.is_paused:
       await ctx.send('Não tô tocando nada')
       return
     
-    if loop[ctx.guild.id]:
-      loop[ctx.guild.id] = False
-      estado = 'desativado'
-      await ctx.send('Loop desativado! :no_mouth:')
-
-    elif not loop[ctx.guild.id]:
-      loop[ctx.guild.id] = True
-      estado = 'ativado'
-      await ctx.send('Loop ativado!!! :repeat: :grinning:')
-    else:
-      await ctx.send(':warning: Erro! O estado do loop não foi alterado!')
+    if vc.queue.loop == Loop.NONE:
+      vc.queue.set_loop("SONG")
+      await ctx.send("Loop ativado para a música atual! :repeat_one:")
+      return
+    elif vc.queue.loop == Loop.Song:
+      vc.queue.set_loop("LIST")
+      await ctx.send("Loop ativado para a playlist toda! :repeat:")
+      return
+    elif vc.queue.loop == Loop.List:
+      vc.queue.set_loop("NONE")
+      await ctx.send("Loop desativado! :no_entry_sign:")
+      return
 
 
 # =======================================================================================================
@@ -781,72 +823,55 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         queues[before.channel.guild.id].clear()
 
 # =======================================================================================================
-  
-class Identificador():
-
-  async def identifica(link):
-  
-    if link.startswith('https'):
-      if 'youtu' in link:
-
-        if 'list=' in link:
-          return 'ytp'
-
-        else:
-          return 'ytl'
-      
-      if 'soundcloud' in link:
-        return 'sc'
-      
-      return None
-    else:
-      return 'pesquisa'
 
 class mensagemBunita():
 
-  async def playlist(ctx, playlist, first):
-    data = playlist.data
-
-    embed = Embed(title='Playlist adicionada a playlist do server! :thumbsup:', 
-    description=f"{data['playlistInfo']['name']}", 
+  async def playlist(ctx, playlist):
+    embed = Embed(title='Playlist adicionada a queue do server! :thumbsup:', 
+    description=f"{playlist.name}", 
     colour=0xFF0080)
 
     duração = 0
-    for i in range(0,len(data['tracks'])):
-      duração = duração + data['tracks'][i]['info']['length'] /1000
-    
-    duração = time.strftime('%M:%S', time.gmtime(duração))
+    for musica in playlist.tracks:
+      duração = duração + musica.length
+
+    if not duração >= 3600:
+      duração = time.strftime('%M:%S', time.gmtime(duração))
+    else:
+      duração = time.strftime('%H:%M:%S', time.gmtime(duração))
 
     embed.add_field(name='Duração total', 
-    value=f"{duração}")
+    value=f"`{duração}`")
 
     embed.add_field(name='Músicas adicionadas',
-    value=f"`{len(data['tracks'])}`",
+    value=f"`{len(playlist.tracks)}`",
     inline=True)
         
     embed.set_author(name='Pediu essa', 
-    icon_url=ctx.author.avatar_url)
+    icon_url=ctx.author.display_avatar)
 
-    embed.set_thumbnail(url=first.thumb)
+    embed.set_thumbnail(url=playlist.tracks[0].thumb)
 
     return embed
 
   async def musicayt(ctx, musica, player):
-    embed = Embed(title=musica.title, url=f"https://www.youtube.com/watch?v={musica.ytid}", colour=0xFF0080)
+    embed = Embed(title=musica.title, url=f"{musica.uri}", colour=0xFF0080)
 
-    if musica.duration >= 3600000000:
-      duração = time.strftime('%H:%M:%S', time.gmtime(musica.duration/1000))
-      posição = time.strftime('%H:%M:%S', time.gmtime(player.position/1000))
-    else:    
-      duração = time.strftime('%M:%S', time.gmtime(musica.duration/1000))
-      posição = time.strftime('%M:%S', time.gmtime(player.position/1000))
+    if musica.is_stream():
+      string_tempo = '`Ao vivo :red_circle:`'
+    else:
+      if musica.length >= 3600:
+        duração = time.strftime('%H:%M:%S', time.gmtime(musica.length))
+        posição = time.strftime('%H:%M:%S', time.gmtime(player.position))
+      else:    
+        duração = time.strftime('%M:%S', time.gmtime(musica.length))
+        posição = time.strftime('%M:%S', time.gmtime(player.position))
 
-    string_tempo = f'`{posição}\{duração}`'
-    if musica.is_stream:
-      string_tempo = '`Ao vivo`'
+      string_tempo = f'`{posição}\{duração}`'
+    
     embed.add_field(name='Duração', value=string_tempo)
     embed.add_field(name='Canal', value=f"`{musica.author}`")
-    embed.set_author(name='Pediu essa', icon_url=ctx.author.avatar_url)
+    embed.set_author(name='Pediu essa', icon_url=ctx.author.display_avatar)
     embed.set_thumbnail(url=musica.thumb)
 
     return embed
@@ -868,18 +893,21 @@ class mensagemBunita():
     lista_embeds = []
     musicas = ''
     duração = 0
-    for i in range(0,len(queues)):
-      duração = duração + queues[i]['track'].duration /1000
+    for musica in queues:
+      duração = duração + musica[0].length
     
-    duração = time.strftime('%M:%S', time.gmtime(duração))
+    if not duração >= 3600:
+      duração = time.strftime('%M:%S', time.gmtime(duração))
+    else:
+      duração = time.strftime('%H:%M:%S', time.gmtime(duração))
 
 
-    musicas = '`Música atual:`' + f"[{queues[0]['track'].title}](https://www.youtube.com/watch?v={queues[0]['track'].ytid}) | `{time.strftime('%M:%S', time.gmtime(queues[0]['track'].duration / 1000))}`" + '\n \n'
+    musicas = "`Música atual:`" + f"[{queues[0][0].title}]({queues[0][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[0][0].length))}`" + "\n \n"
 
     for i in range(1, len(queues)):
             
       if i % 10 == 0 or i == len(queues) - 1:
-        musicas = musicas + f'`{i}.`' + f"[{queues[i]['track'].title}](https://www.youtube.com/watch?v={queues[i]['track'].ytid}) | `{time.strftime('%M:%S', time.gmtime(queues[i]['track'].duration / 1000))}`" + '\n \n' 
+        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}`" + '\n \n' 
         musicas = musicas + f'{len(queues) - 1} músicas na playlist | Tempo total: {duração}'
 
         embed = Embed(title='Músicas na playlist :disguised_face:', description=musicas, colour=0xFF0080)
@@ -889,7 +917,7 @@ class mensagemBunita():
         musicas = ''
           
       elif i % 10 != 0:
-        musicas = musicas + f'`{i}.`' + f"[{queues[i]['track'].title}](https://www.youtube.com/watch?v={queues[i]['track'].ytid}) | `{time.strftime('%M:%S', time.gmtime(queues[i]['track'].duration / 1000))}`" + '\n \n'
+        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}`" + '\n \n'
 
 
     if len(lista_embeds) > 1:
