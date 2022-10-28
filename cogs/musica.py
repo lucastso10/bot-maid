@@ -55,6 +55,13 @@ class Queue:
       return None
 
   @property
+  def current_ctx(self):
+    if self.queue:
+      return self.queue[1]
+    else:
+      return None
+
+  @property
   def playlist(self):
     return self.queue
 
@@ -69,13 +76,12 @@ class Queue:
     if self.loop == Loop.Song:
       pass
     elif self.loop == Loop.List:
-      self.queue.extend(self.queue[0])
-      self.queue.pop(0)
+      self.add((self.queue[0][0],self.queue[0][1]))
+      self.skip()
     else:
-      self.queue.pop(0)
-
-    if self.queue:
-      return self.queue[0]
+      self.skip()
+      
+    return self.queue[0]
 
   def set_loop(self, mode):
     if mode == "NONE":
@@ -113,10 +119,12 @@ class Player(wavelink.Player):
     await self.play(self.queue.current_track[0])
 
   async def start_next(self):
-    try:
-      await self.play(self.queue.next_track()[0])
-    except TypeError:
-      return
+    await self.play(self.queue.next_track()[0])
+    #try:
+     # await self.play(self.queue.next_track()[0])
+    #except TypeError:
+     # print("TypeError")
+     # return
 
 
 
@@ -147,7 +155,8 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # toca a proxima musica quando a atual acabar
   @commands.Cog.listener()
   async def  on_wavelink_track_end(self, player: wavelink.Player, track: wavelink.Track, reason):
-    await player.start_next()
+    if reason == "FINISHED":
+      await player.start_next()
 
 # =======================================================================================================
   # printa erro e skipa musica
@@ -286,7 +295,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       await ctx.send('Música despausada! :thumbsup:')
     
     #verifica se o player ta tocando
-    elif player.is_playing():
+    elif vc.is_playing():
       await ctx.send('A música já está tocando! :musical_note:')
     
     #a ultima opção é o bot não ta tocando nada
@@ -298,7 +307,6 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   @commands.command(aliases=['s', 'skip', 'skipar'], help='Pula para a próxima música da playlist e se não tiver nenhuma só não toca nada')
   async def pular(self, ctx):
     vc: Player = ctx.voice_client
-
     #verifica se o bot ta conectado no canal de voz
     if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
@@ -322,10 +330,14 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
           
       if msg.content == '1':
         await ctx.send('Okay, pulando a música e mantendo a no loop...')
-        vc.queue.add(vc.queue.current_track)
       
       elif msg.content == '2':
         await ctx.send('Okay, pulando a música e removendo ela do loop...')
+        await vc.stop()
+        vc.queue.set_loop("NONE")
+        await vc.start_next()
+        vc.queue.set_loop("LIST")
+        return
 
       else:
         await ctx.send('Operação cancelada! :robot: bep bop')
@@ -902,12 +914,12 @@ class mensagemBunita():
       duração = time.strftime('%H:%M:%S', time.gmtime(duração))
 
 
-    musicas = "`Música atual:`" + f"[{queues[0][0].title}]({queues[0][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[0][0].length))}`" + "\n \n"
+    musicas = "`Música atual:`" + f"[{queues[0][0].title}]({queues[0][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[0][0].length))}` | pedida por `{queues[i][1].author.name}`" + "\n \n"
 
     for i in range(1, len(queues)):
             
       if i % 10 == 0 or i == len(queues) - 1:
-        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}`" + '\n \n' 
+        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}` | pedida por `{queues[i][1].author.name}`" + '\n \n' 
         musicas = musicas + f'{len(queues) - 1} músicas na playlist | Tempo total: {duração}'
 
         embed = Embed(title='Músicas na playlist :disguised_face:', description=musicas, colour=0xFF0080)
