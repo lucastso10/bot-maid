@@ -67,10 +67,13 @@ class Queue:
 
   @property
   def length(self):
-    return self.queue.count
+    return len(self.queue)
 
   def add(self, *args):
     self.queue.extend(args)
+
+  def add_to_front(self, *args):
+    self.queue.append(args)
 
   def next_track(self):
     if self.loop == Loop.Song:
@@ -92,14 +95,16 @@ class Queue:
       self.loop = Loop.List
 
   def remove_track(self, position):
-    self.queue.pop(position)
+    return self.queue.pop(position)
 
   def shuffle(self):
     if self.queue:
       return shuffle(self.queue)
 
   def clear(self):
+    atual = self.current_track
     self.queue.clear()
+    self.add(atual)
 
   def skip(self):
     self.queue.pop(0)
@@ -119,12 +124,18 @@ class Player(wavelink.Player):
     await self.play(self.queue.current_track[0])
 
   async def start_next(self):
-    await self.play(self.queue.next_track()[0])
-    #try:
-     # await self.play(self.queue.next_track()[0])
-    #except TypeError:
-     # print("TypeError")
-     # return
+    try:
+     await self.play(self.queue.next_track()[0])
+    except TypeError:
+     return
+
+  async def teardown(self):
+    await self.disconnect()
+    try:
+      del self.queue
+      del self
+    except KeyError:
+      pass
 
 
 
@@ -147,7 +158,8 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
                                           https=True)
 
 # =======================================================================================================
-  @commands.Cog.listener() # quando o node estiver pronto printar informando
+  # quando o node estiver pronto printar informando
+  @commands.Cog.listener()
   async def on_wavelink_node_ready(self, node: wavelink.Node):
     print(f"Node {node.identifier} está conectado!")
   
@@ -303,7 +315,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       await ctx.send('não tem nenhuma musica tocando! :skull:')
 
 # =======================================================================================================
-  # pula para proxima música da fila
+  # pula para proxima música da fila se o loop estiver ativado pergunta se quer realmente remove
   @commands.command(aliases=['s', 'skip', 'skipar'], help='Pula para a próxima música da playlist e se não tiver nenhuma só não toca nada')
   async def pular(self, ctx):
     vc: Player = ctx.voice_client
@@ -348,36 +360,31 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     await vc.start_next()
 
 # =======================================================================================================
-
+  # faz o bot sair do canal de voz e destroi o player
   @commands.command(aliases=['stop', 'leave', 'sair'], help='Faz o bot sair do canal de voz e limpa a playlist')
   async def parar(self, ctx):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
      #verifica se o bot ta conectado no canal de voz
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
     
      #verifica se o usuario que invoco tá em um canal de voz em primeiro lugar
     elif ctx.message.author.voice is None:
       await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
     
-    #verifica se o usuario que invoco tá no mesmo canal de voz que o bot
-    elif player.channel_id != ctx.message.author.voice.channel.id:
-      await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-    
     #se o bot tiver conectado ao canal de voz ele ele quita e limpa a queue
-    elif player.is_connected:
-      await player.disconnect()
-      queues[ctx.guild.id].clear()
+    elif vc.is_connected():
+      await vc.disconnect()
+      await vc.teardown()
       await ctx.send('ta parei')
-      if loop[ctx.guild.id]:
-        loop[ctx.guild.id] = False
 
 # =======================================================================================================
-
+  # limpa todas as músicas da playlist
   @commands.command(aliases=['clear'], help='Limpa todas as músicas da playlist')
   async def limpar(self, ctx):
-    if loop[ctx.guild.id]:
+    vc: Player = ctx.voice_client
+    if vc.queue.loop == Loop.List:
         
       def check(m):
         return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ['s', 'n', 'sim', 'nao']
@@ -393,14 +400,12 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       else:
         await ctx.send('Playlist não limpada!')
         return
-    atual = queues[ctx.guild.id][0]
-    queues[ctx.guild.id].clear()
-    queues[ctx.guild.id].append(atual)
-
+    
+    vc.queue.clear()
     await ctx.send('Queue limpada! :thumbsup:')
 
 # =======================================================================================================
-
+  # mostra todas as músicas da playlist
   @commands.command(aliases=['queue'], help='Mostra todas as músicas que estão na playlist')
   async def playlist(self, ctx):
     vc: Player = ctx.voice_client
@@ -409,40 +414,38 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       await ctx.send('Não tem nenhuma música na playlist!')
       return
 
+    print(vc.queue.length)
+
     if vc.queue.length == 1:
-      await self.tocandoagora(ctx=ctx)
+      await self.tocandoagora(ctx)
       return
 
     await mensagemBunita.Queue(queues=vc.queue.playlist, ctx=ctx)
 
 
 # =======================================================================================================
-
+  #
   @commands.command(aliases=['skipto', 'sp', 'st', 'skiparpara'], help='Pula para o número da playlist mandado', description='.pularpara <posição da playlist>')
   async def pularpara(self, ctx, *, position: int):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
-
-    elif ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-      return
     
-    elif not player.is_playing and not player.is_paused:
+    elif not vc.is_playing() and not vc.is_paused():
+      print(f"is_playing = {vc.is_playing()} and is_paused: {vc.is_paused()}")
       await ctx.send('Não tô tocando nada')
       return
-
-    elif player.channel_id != ctx.message.author.voice.channel.id:
-      await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-      return
   
-    elif len(queues[ctx.guild.id]) <= 2:
+    elif vc.queue.length <= 2:
       await ctx.send('Não há musicas o suficiente na playlist para executar esse comando! :skull:')
       return
 
-    elif loop[ctx.guild.id]:
+    elif vc.queue.length < position:
+      await ctx.send("A posição dada excede o número de músicas na playlist! :disguised_face:")
+
+    elif vc.queue.loop == Loop.List:
       
       def check(m):
         return m.author == ctx.author and m.channel == ctx.channel and m.content == '1' or m.content == '2' or m.content == '3'
@@ -452,20 +455,21 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
       except asyncio.TimeoutError:
         await ctx.send('Desculpa mas você demorou muito para responder, nada foi feito!')
+        return
           
       if msg.content == '1':
         await ctx.send('Okay, removendo as músicas...')
         
       elif msg.content == '2':
         await ctx.send('Okay, pulando até a posição que escolheu...')
-        await player.stop()
+        await vc.stop()
 
         for i in range(0,position):
-          atual = queues[ctx.guild.id][0]
-          queues[ctx.guild.id].pop(0)
-          queues[ctx.guild.id].append(atual)
+          atual = vc.queue.current_track
+          vc.queue.skip()
+          vc.queue.add(atual)
         
-        await player.play(queues[ctx.guild.id][0]['track'])
+        await vc.start_playing()
         return
         
       else:
@@ -473,25 +477,22 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         return
     
     if position == 1:
-      self.pular(ctx=ctx)
+      self.pular(ctx)
       return
     
-    await player.stop()
+    await vc.stop()
 
     for i in range(0,position):
-      queues[ctx.guild.id].pop(0)
-    
-    await asyncio.sleep(0.5)
+      vc.queue.skip()
 
-    await player.play(queues[ctx.guild.id][0]['track'])
-
-    await ctx.send(f"Queue skipada para posição `{position}. {queues[ctx.guild.id][0]['track'].title}`")
+    await vc.start_playing()
+    await ctx.send(f"Queue skipada para posição `{position}. {vc.queue.current_track[0].title}`")
 
 # =======================================================================================================
 
   @commands.command(aliases=['seek'], help='Vai para o minuto da música que comandar (no modelo horas:minutos:segundos)', description='.tempo <horas:minutos:segundos / minutos:segundos>')
   async def tempo(self, ctx, *, tempo):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
     verificação = tempo.split(':')
     
@@ -514,11 +515,11 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       await ctx.send('Tempo inválido!')
       return
     
-    if tempoML > queues[ctx.guild.id][0]['track'].duration:
+    if tempoML > vc.queue.current_track[0].length:
       await ctx.send('Tempo maior que a duração do video! :skull:')
       return
 
-    await player.seek(tempoML)
+    await vc.seek(tempoML)
 
     await ctx.send(f'Video avançado para o tempo `{tempo}`! :thumbsup:')
 
@@ -558,125 +559,70 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 # =======================================================================================================
   @commands.command(aliases=['remove'], help='remove uma música na posição comandar', description='.remover <posição da playlist>')
   async def remover(self, ctx, *, posição : int):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
 
-    if ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-      return
-
-    if player.channel_id != ctx.message.author.voice.channel.id:
-      await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-      return
-
-    if posição > len(queues[ctx.guild.id]) or posição <= 0:
-      await ctx.send(':warning: Erro: Número invalido')
+    if posição > vc.queue.length or posição <= 0:
+      await ctx.send(':warning: Erro: Número invalido!')
       return
     
-    await ctx.send(f'O video `{queues[ctx.guild.id][posição]["track"].title}`, foi removido com sucesso da queue!')
-    queues[ctx.guild.id].pop(posição)
+    await ctx.send(f'O video `{vc.queue.remove_track(posição)[0].title}`, foi removido com sucesso da queue!')
 
 # =======================================================================================================
   
-  @commands.command(aliases=['v'], help='Muda o volume da música! O volume vai de 0 até 1000 (cuidado 1000 é muito alto)', description='.volume <número do volume>', hidden=True)
+  @commands.command(aliases=['v'], help='Muda o volume da música! O volume vai de 0 até 1000 (cuidado 1000 é muito alto), sendo 100 o número padrão', description='.volume <número do volume>', hidden=True)
   async def volume(self, ctx, *, vol : int):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
 
-    if ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-      return
-
-    if player.channel_id != ctx.message.author.voice.channel.id:
-      await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-      return
-
-    await player.set_volume(vol)
+    await vc.set_volume(vol)
 
 
 # =======================================================================================================
   @commands.command(aliases=['playskip' ,'ps' ,'ta'], help='Pula a música atual e imediatamente toca a música que comandar ignorando a queue', description='.tocaragora <link do video do youtube/termo pra pesquisar no youtube>')
   async def tocaragora(self, ctx, *, musica):
-    player = self.bot.wavelink.get_player(ctx.guild.id)
+    vc: Player = ctx.voice_client
 
-    if not player.is_connected:
+    if not vc:
       await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
-
-    if ctx.message.author.voice is None:
-      await ctx.send('Você nem ta em um canal de voz... sucumba :skull:')
-      return
-
-    if player.channel_id != ctx.message.author.voice.channel.id:
-      await ctx.send('Desculpa mas você não está no mesmo canal de voz que eu estou! sucumba :skull:')
-      return
     
-    if not player.is_playing and not player.is_paused:
+    if not vc.is_playing and not vc.is_paused:
       await ctx.send('Não tem nenhuma música tocando!') 
       return
 
-    await player.stop()
-
-    queues[ctx.guild.id].pop(0)
+    await vc.stop()
 
     # pega o tipo de str que o usuario mando
-    tipo = await Identificador.identifica(link=musica)
+    tipo = identifica(musica)
     
     # dependendo do tipo da str o bot faz algo diferente
-    if tipo == 'pesquisa':
-      musicas = await self.bot.wavelink.get_tracks(f'ytsearch:{musica}')
-      if not musicas:
-        await ctx.send(':warning: Erro: sua música não foi encontrada')
-        return
-    elif tipo == 'ytl':
-      musicas = await self.bot.wavelink.get_tracks(musica)
-      if not musicas:
+    if tipo == 'pesquisa' or tipo == 'ytl':
+      musica = await wavelink.YouTubeTrack.search(query=musica, return_first=True)
+      if not musica:
         await ctx.send(':warning: Erro: sua música não foi encontrada')
         return
     elif tipo == 'ytp':
-      penis = await self.bot.wavelink.get_tracks(musica)
-      musicas = penis.tracks
-      if not musicas:
-        await ctx.send(':warning: Erro: sua música não foi encontrada')
-        return
-      embed = await mensagemBunita.playlist(ctx=ctx, playlist=penis, first=musicas[0])
-      await ctx.send(embed=embed)
+      await ctx.send("Desculpe mas esse comando não aceita playlist! :disguised_face:")
     elif tipo == 'sc':
       await ctx.send('Não tenho suporte pra soundcloud ainda! :skull:')
       return
     elif tipo is None:
-      await ctx.send(f'Link invalido! Só aceito links do youtube ou termos de pesquisa! :disguised_face:')
+      await ctx.send('Link invalido! Só aceito links do youtube ou termos de pesquisa! :disguised_face:')
       return
 
-    #adiciona a musica a playlist
-    if tipo != 'ytp':
-      if len(queues[ctx.guild.id]) <= 1000:
-        musica = musicas[0]
-        content = {'track' : musica, 'ctx' : ctx ,'tipo' : tipo}
-        queues[ctx.guild.id].insert(0, content)
-      else:
-        await ctx.send(':warning: Você alcançou o limite de 5000 musicas por queue! Música não adicionada! :skull:')
-        return
-    else:
-      songs = []
-      for i in range(0, len(musicas)):
-        if len(queues[ctx.guild.id]) <= 1000:
-          content = {'track' : musicas[i], 'ctx' : ctx ,'tipo' : tipo}
-          songs.append(content)
-        else:
-          await ctx.send(':warning: Você alcançou o limite de 5000 musicas por queue! Música não adicionada! :skull:')
-          break
-      queues[ctx.guild.id] = songs + queues[ctx.guild.id]
+    vc.queue.skip()
+    vc.queue.add_to_front((musica,ctx))
 
-    await player.play(queues[ctx.guild.id][0]['track'])
+    await vc.start_playing()
 
-    await ctx.send(f'Tocando `{queues[ctx.guild.id][0]["track"]}` agora! No canal de voz `{ctx.author.voice.channel.name}` :musical_note:')
+    await ctx.send(f'Tocando `{vc.queue.current_track[0].title}` agora! No canal de voz `{vc.queue.current_track[1].author.voice.channel.name}` :musical_note:')
 
 
 # =======================================================================================================
@@ -798,41 +744,40 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       return
     
     elif before.mute == False and after.mute == True:
-      player = wavelink.Player
-      await player.set_pause(True)
+      vc: Player = after.channel.guild.voice_client
+      await vc.set_pause(True)
       return
     
     elif before.mute == True and after.mute == False:
-      player = wavelink.Player
-      await player.set_pause(False)
+      vc: Player = after.channel.guild.voice_client
+      await vc.set_pause(False)
       return
     
     elif not before.channel is None and not after.channel is None:
-      player = wavelink.Player
-      await player.set_pause(True)
+      vc: Player = after.channel.guild.voice_client
+      await vc.set_pause(True)
       await asyncio.sleep(0.5)
-      await player.set_pause(False)
+      await vc.set_pause(False)
       return
 
     elif before.channel is None:
-      player = wavelink.Player
+      vc: Player = after.channel.guild.voice_client
       time = 0
       while True:
         await asyncio.sleep(1)
         time = time + 1
-        if player.is_playing and not player.is_paused:
+        if vc.is_playing() and not vc.is_paused():
           time = 0
         if time == 600:
-          await player.disconnect() #if not it disconnects
-        if not player.is_connected:
+          await vc.teardown() #if not it disconnects
+        if not vc.is_connected():
           break
       return
     
     elif after.channel is None:
-      player = wavelink.Player
-      if not player.is_connected:
-        await player.stop()
-        queues[before.channel.guild.id].clear()
+      vc: Player = before.channel.guild.voice_client
+      if not vc.is_connected():
+        vc.teardown()
 
 # =======================================================================================================
 
@@ -890,8 +835,12 @@ class mensagemBunita():
   
   async def musicaQueue(ctx, musica, posição):
     embed = Embed(title=musica.title, url=f"https://www.youtube.com/watch?v={musica.uri}", colour=0xFF0080)
+
     
-    duração = time.strftime('%M:%S', time.gmtime(musica.length/1000))
+    if musica.length >= 3600:
+      duração = time.strftime('%H:%M:%S', time.gmtime(musica.length))
+    else:
+      duração = time.strftime('%M:%S', time.gmtime(musica.length))
     embed.add_field(name='Duração', value=f'`{duração}`')
     embed.add_field(name='Canal', value=f"`{musica.author}`")
     embed.add_field(name='Posição na playlist', value=f"`{posição}`", inline=False)
@@ -914,7 +863,7 @@ class mensagemBunita():
       duração = time.strftime('%H:%M:%S', time.gmtime(duração))
 
 
-    musicas = "`Música atual:`" + f"[{queues[0][0].title}]({queues[0][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[0][0].length))}` | pedida por `{queues[i][1].author.name}`" + "\n \n"
+    musicas = "`Música atual:`" + f"[{queues[0][0].title}]({queues[0][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[0][0].length))}` | pedida por `{queues[0][1].author.name}`" + "\n \n"
 
     for i in range(1, len(queues)):
             
@@ -929,7 +878,7 @@ class mensagemBunita():
         musicas = ''
           
       elif i % 10 != 0:
-        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}`" + '\n \n'
+        musicas = musicas + f'`{i}.`' + f"[{queues[i][0].title}]({queues[i][0].uri}) | `{time.strftime('%M:%S', time.gmtime(queues[i][0].length))}` | pedida por `{queues[i][1].author.name}`" + '\n \n'
 
 
     if len(lista_embeds) > 1:
