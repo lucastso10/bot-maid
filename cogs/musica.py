@@ -154,7 +154,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
   async def start_nodes(self):
     node = await wavelink.NodePool.create_node(bot=self.bot,
-                                          host='lavalink-replit.bolofofodoidao.repl.co',
+                                          host=os.environ['server lavalink'],
                                           port=443,
                                           password='youshallnotpass',
                                           https=True)
