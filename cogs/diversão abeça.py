@@ -7,30 +7,6 @@ class Diversão(commands.Cog, description='Diversão abeça :nerd:'):
   def __init__(self, client):
       self.client = client
   
-  @commands.command(help='Mede o tamanho do pênis do amiguinho(a)', description='.penis <@usuário>' )
-  async def penis(self, ctx, user : discord.Member):
-    tamanho = random.randint(0, 10)
-    corpo = ''
-    cabeça = 'D'
-    bolas = '8'
-    mensagem = ''
-
-    for i in range(0, tamanho):
-        corpo += '='
-    
-    if tamanho == 0:
-      mensagem = 'Me desculpe amigo mas você tem micro penis :disguised_face:'
-    elif tamanho >= 1 and not tamanho >= 3:
-      mensagem = 'Que mixuruca'
-    elif tamanho >= 3 and not tamanho >= 5:
-      mensagem = 'Ta na média'
-    elif tamanho >= 5 and not tamanho >= 8:
-      mensagem = ':flushed:'
-    elif tamanho >= 8 and not tamanho == 10:
-      mensagem = 'Kid bengala 2'
-    
-    await ctx.send(f'O pingolin de {user.mention}: \n {bolas}{corpo}{cabeça} \n {mensagem}')
-  
   @commands.command(help='De duas opções pro bot e ele escolhe uma!', description='.escolha <opção 1>:<opção 2>')
   async def escolha(self, ctx, *, mensagem):
     opções = mensagem.split(':')

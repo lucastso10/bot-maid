@@ -52,8 +52,6 @@ async def bug(ctx):
   await ctx.send(f'Se quiser relatar um bug entre em contato com {owner}')
 
 
-
-
 client.run(os.environ['TOKEN'])
 
 

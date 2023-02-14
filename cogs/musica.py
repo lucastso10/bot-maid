@@ -49,10 +49,10 @@ class Queue:
 
   @property
   def current_track(self):
-    if self.queue:
-      return self.queue[0]
-    else:
+    if self.length <= 0:
       return None
+    else:
+      return self.queue[0]
 
   @property
   def current_ctx(self):
@@ -69,17 +69,20 @@ class Queue:
   def length(self):
     return len(self.queue)
 
-  def add(self, *args):
-    self.queue.extend(args)
+  def add(self, track, ctx):
+    self.queue.append((track, ctx))
 
-  def add_to_front(self, *args):
-    self.queue.append(args)
+  def add_to_front(self, track, ctx):
+    self.queue.insert(0,(track, ctx))
 
   def next_track(self):
+    if self.length <= 0:
+      return None
+    
     if self.loop == Loop.Song:
       pass
     elif self.loop == Loop.List:
-      self.add((self.queue[0][0],self.queue[0][1]))
+      self.add(self.queue[0][0],self.queue[0][1])
       self.skip()
     else:
       self.skip()
@@ -98,19 +101,18 @@ class Queue:
     return self.queue.pop(position)
 
   def shuffle(self):
-    if self.queue:
-      return shuffle(self.queue)
+    atual = self.current_track
+    self.queue.pop(0)
+    shuffle(self.queue)
+    self.add_to_front(atual[0], atual[1])
 
   def clear(self):
     atual = self.current_track
     self.queue.clear()
-    self.add(atual)
+    self.add(atual[0], atual[1])
 
   def skip(self):
     self.queue.pop(0)
-
-  def where(self, track):
-    return self.queue.index(track)
 
 
     
@@ -130,9 +132,9 @@ class Player(wavelink.Player):
      return
 
   async def teardown(self):
-    await self.disconnect()
+    if self.is_connected():
+      await self.disconnect()
     try:
-      del self.queue
       del self
     except KeyError:
       pass
@@ -191,7 +193,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
   # pesquisa o que foi dado no youtube
   # se o bot já estiver tocando algo o parametro do comando vai para a fila
   @commands.command(aliases=['t','play','p'], help='Toca vídeos do youtube no canal de voz que você está conectado', description='.tocar <link do video do youtube/termo pra pesquisar no youtube>')
-  async def tocar(self, ctx, *, musica: str):
+  async def tocar(self, ctx,*, musica: str):
     vc: Player = ctx.voice_client
     
     # conecta no canal de voz
@@ -232,13 +234,15 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     #adiciona a musica a playlist 
     if tipo == 'ytp':
       for musica in musicas:
-        vc.queue.add((musica, ctx))
+        vc.queue.add(musica, ctx)
+    elif musica == None:
+      ctx.send("Desculpa mas não encontrei essa musica! :disguised_face:")
     else:
-      vc.queue.add((musica, ctx))
-      
+      vc.queue.add(musica, ctx)
+
     # se o bot estiver tocando algo já ele só manda uma mensagem falando que adiciono na playlist
     if vc.is_playing() and not vc.is_paused():
-      embed = await mensagemBunita.musicaQueue(ctx=ctx, musica=musica, posição=vc.queue.where( (musica,ctx)))
+      embed = await mensagemBunita.musicaQueue(ctx=ctx, musica=musica, posição=vc.queue.length)
       await ctx.send(embed=embed)
       return
 
@@ -347,6 +351,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         await ctx.send('Okay, pulando a música e removendo ela do loop...')
         await vc.stop()
         vc.queue.set_loop("NONE")
+        await asyncio.sleep(0.5)
         await vc.start_next()
         vc.queue.set_loop("LIST")
         return
@@ -357,6 +362,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     
     await vc.stop()
     await ctx.send('Música skipada! :thumbsup:')
+    await asyncio.sleep(0.5)
     await vc.start_next()
 
 # =======================================================================================================
@@ -406,6 +412,13 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
 # =======================================================================================================
   # mostra todas as músicas da playlist
+  @commands.command(hidden=True, help='Mostra todas as músicas que estão na playlist')
+  async def printlist(self, ctx):
+    vc: Player = ctx.voice_client
+    print(vc.queue.playlist)
+
+# =======================================================================================================
+  # mostra todas as músicas da playlist
   @commands.command(aliases=['queue'], help='Mostra todas as músicas que estão na playlist')
   async def playlist(self, ctx):
     vc: Player = ctx.voice_client
@@ -413,8 +426,6 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     if not vc or vc.queue.is_empty:
       await ctx.send('Não tem nenhuma música na playlist!')
       return
-
-    print(vc.queue.length)
 
     if vc.queue.length == 1:
       await self.tocandoagora(ctx)
@@ -467,8 +478,9 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
         for i in range(0,position):
           atual = vc.queue.current_track
           vc.queue.skip()
-          vc.queue.add(atual)
-        
+          vc.queue.add(atual[0], atual[1])
+
+        await asyncio.sleep(0.5)
         await vc.start_playing()
         return
         
@@ -485,6 +497,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
     for i in range(0,position):
       vc.queue.skip()
 
+    await asyncio.sleep(0.5)
     await vc.start_playing()
     await ctx.send(f"Queue skipada para posição `{position}. {vc.queue.current_track[0].title}`")
 
@@ -573,7 +586,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
 # =======================================================================================================
   
-  @commands.command(aliases=['v'], help='Muda o volume da música! O volume vai de 0 até 1000 (cuidado 1000 é muito alto), sendo 100 o número padrão', description='.volume <número do volume>', hidden=True)
+  @commands.command(aliases=['v'], help='Muda o volume da música! O volume vai de 0 até 1000 (cuidado 1000 é muito alto), sendo 100 o número padrão', description='.volume <número do volume>')
   async def volume(self, ctx, *, vol : int):
     vc: Player = ctx.voice_client
 
@@ -618,121 +631,28 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
       return
 
     vc.queue.skip()
-    vc.queue.add_to_front((musica,ctx))
+    vc.queue.add_to_front(musica,ctx)
 
+    await asyncio.sleep(0.5)
     await vc.start_playing()
 
     await ctx.send(f'Tocando `{vc.queue.current_track[0].title}` agora! No canal de voz `{vc.queue.current_track[1].author.voice.channel.name}` :musical_note:')
 
-
 # =======================================================================================================
-  @commands.is_owner()
-  @commands.command(hidden=True)
-  async def infiltrar(self, ctx, *, id : int):
-    player = self.bot.wavelink.get_player(id)
+  @commands.command(aliases=['shuffle'], help='Embaralha as músicas da playlist')
+  async def embaralhar(self, ctx):
+    vc: Player = ctx.voice_client
 
-    def check(m):
-      return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ['s', 'n', 'sim', 'nao']
-    
-    server = self.bot.get_guild(id)
-
-    await ctx.send(f'vc quer infiltrar no servidor {server.name}')
-    try:
-      msg = await self.bot.wait_for('message', check=check, timeout=30.0)
-    except asyncio.TimeoutError:
-      await ctx.send('Desculpa vc demorou muito pra responde')
+    if not vc:
+      await ctx.send('Eu não estou em um canal de voz! :skull:')
       return
-    
-    if msg.content.lower() == 'n' or msg.content.lower() == 'nao':
-      await ctx.send('Operação cancelada! :robot: BEP BOP')
+
+    if vc.queue.length <= 3:
+      await ctx.send("Não tem música o suficiente para embaralhar a playlist! :zany_face:")
       return
-    
-    if not player.is_connected:
-      nome_canais = []
-      canais = server.voice_channels
-      canais_ativos = []
 
-      for canal in canais:
-        if not canal.members == '':
-          canais_ativos.append(canal)
-      
-      if not canais_ativos:
-        await ctx.send('não tem ninguem conectado nesse servidor')
-        return
-      
-      if len(canais_ativos) > 1:
-        nomes = []
-        mensagem = 'Quais desses canais de voz eu devo infiltrar? (coloque o número do servidor que quer invadir) \n'
-        for i in range(0,len(canais_ativos)):
-          mensagem = mensagem + f'`{i}.` ' + canais_ativos[i].name + ' \n'
-
-        await ctx.send(mensagem)
-        try:
-          msg = await self.bot.wait_for('message', check=None, timeout=30.0)
-        except asyncio.TimeoutError:
-          await ctx.send('Desculpa vc demorou muito pra responde')
-          return
-        
-        canal = canais_ativos[int(msg.content)]
-      else:
-        canal = canais_ativos[0]
-        
-      await ctx.send('Qual música vc quer infiltrar?(so link do youtube)')
-      try:
-        msg = await self.bot.wait_for('message', check=None, timeout=30.0)
-      except asyncio.TimeoutError:
-        await ctx.send('Desculpa vc demorou muito pra responde')
-        return
-      
-      musicas = await self.bot.wavelink.get_tracks(msg.content)
-
-      if not musicas:
-        await ctx.send('Deu ruim na música! Operação cancelada! :robot: BEP BOP')
-        return
-
-      def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ['s', 'n', 'sim', 'nao']
-      
-      await ctx.send('quer mudar o volume?')
-      try:
-        msg = await self.bot.wait_for('message', check=check, timeout=30.0)
-      except asyncio.TimeoutError:
-        await ctx.send('Desculpa vc demorou muito pra responde')
-        return
-      
-      if msg.content.lower() == 's' or msg.content.lower() == 'sim':
-        await ctx.send('pra qual valor?')
-        try:
-          msg = await self.bot.wait_for('message', check=None, timeout=30.0)
-        except asyncio.TimeoutError:
-          await ctx.send('Desculpa vc demorou muito pra responde')
-          return
-        
-        volume = msg.content
-      
-      await ctx.send('se infiltrando :smiling_imp:')
-
-      if not player.is_connected:
-        await player.connect(canal.id)
-      
-      if player.is_playing or player.is_paused:
-        await player.stop()
-        queues[id].pop(0)
-      
-      content = {'track' : musicas[0], 'ctx' : ctx}
-      queues[id].insert(0, content)
-      
-      await player.play(musicas[0])
-
-      await player.set_volume(int(volume))
-
-
-# =======================================================================================================
-  
-  @commands.command(hidden=True)
-  async def pi(self, ctx):
-    if ctx.guild.id == 276110988028411904:
-      await self.tocar(ctx=ctx, musica='https://youtu.be/tV1grJ4jIH0?list=PL2n0HC2aP0HSO3UOomdROxLN19GfXN35r')
+    vc.queue.shuffle()
+    await ctx.send("Queue foi embaralhada com sucesso! :robot:")
 
 # =======================================================================================================
   @commands.Cog.listener()
@@ -770,14 +690,15 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
           time = 0
         if time == 600:
           await vc.teardown() #if not it disconnects
-        if not vc.is_connected():
+          break
+        if vc is None:
           break
       return
     
     elif after.channel is None:
       vc: Player = before.channel.guild.voice_client
-      if not vc.is_connected():
-        vc.teardown()
+      if vc:
+        await vc.teardown()
 
 # =======================================================================================================
 
