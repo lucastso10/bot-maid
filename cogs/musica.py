@@ -1,4 +1,5 @@
 import discord
+import os
 import wavelink
 from discord.ext import commands
 from discord import Embed
@@ -154,7 +155,7 @@ class Musicas(commands.Cog, description='Músicas :musical_note:'):
 
   async def start_nodes(self):
     node = await wavelink.NodePool.create_node(bot=self.bot,
-                                          host=os.environ['server lavalink'],
+                                          host=os.environ['SERVER'],
                                           port=443,
                                           password='youshallnotpass',
                                           https=True)
